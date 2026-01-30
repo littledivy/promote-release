@@ -80,13 +80,14 @@ mkdir -p out
 cd "$SRC"
 
 # pack each top-level directory except out/
-ls -1d */ 2>/dev/null | grep -v '^out/' | \
-  xargs -I{} -P "$JOBS" bash -lc '
+# shellcheck disable=SC2016
+find . -mindepth 1 -maxdepth 1 -type d ! -name out -print0 | \
+  xargs -0 -I{} -P "$JOBS" bash -c '
     set -euo pipefail
-    d="{}"; name="${d%/}"
+    name="$(basename "$1")"
     echo "Packing $name"
-    tar -C "$name" -czf "../out/$name.tar.gz" .
-  '
+    tar -C "$1" -czf "../out/$name.tar.gz" .
+  ' _ {}
 
 cd ..
 
@@ -97,7 +98,7 @@ for f in out/*.tar.gz; do
   [[ -e "$f" ]] || continue
   size="$(stat -f%z "$f" 2>/dev/null || stat -c%s "$f")"
   if (( size >= 2147483648 )); then
-    echo "WARN: $(basename "$f") is >= 2GiB ($(ls -lh "$f" | awk "{print \$5}")) and will FAIL to upload."
+    echo "WARN: $(basename "$f") is >= 2GiB ($size bytes) and will FAIL to upload."
     too_big=1
   fi
 done
@@ -111,13 +112,15 @@ if ! gh release view "$TAG" -R "$REPO" >/dev/null 2>&1; then
 fi
 
 echo "==> Uploading assets (parallel: $JOBS)"
-ls -1 out/*.tar.gz | \
-  xargs -I{} -P "$JOBS" bash -lc '
+export PROMOTE_TAG="$TAG"
+export PROMOTE_REPO="$REPO"
+# shellcheck disable=SC2016
+find out -maxdepth 1 -name '*.tar.gz' -print0 | \
+  xargs -0 -I{} -P "$JOBS" bash -c '
     set -euo pipefail
-    f="{}"
-    echo "Uploading $(basename "$f")"
-    gh release upload "'"$TAG"'" "$f" -R "'"$REPO"'" --clobber
-  '
+    echo "Uploading $(basename "$1")"
+    gh release upload "$PROMOTE_TAG" "$1" -R "$PROMOTE_REPO" --clobber
+  ' _ {}
 
 if [[ "$MODE" == "publish" ]]; then
   echo "==> Publishing release $TAG"
